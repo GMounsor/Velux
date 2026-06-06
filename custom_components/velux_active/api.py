@@ -318,6 +318,77 @@ class VeluxActiveClient:
             rooms=rooms,
         )
 
+    async def async_websocket_test(self, ws_token: str) -> None:
+        """Connect to VELUX WebSocket, call retrieve_key, and log all messages.
+
+        Used by the velux_active.websocket_test diagnostic service to check
+        whether the HashSignKey is delivered via WebSocket push.
+        """
+        import asyncio
+        import json as _json
+
+        ws_url = "wss://app-ws.velux-active.com/ws/"
+        headers = {"Authorization": f"Bearer {ws_token}"}
+
+        LOGGER.warning("VELUX WebSocket connecting to %s", ws_url)
+        try:
+            async with self._auth.websession.ws_connect(
+                ws_url,
+                headers=headers,
+                heartbeat=30,
+                ssl=True,
+            ) as ws:
+                LOGGER.warning("VELUX WebSocket connected — listening for initial message")
+
+                # Capture first message (may contain initial state / key data)
+                try:
+                    msg = await asyncio.wait_for(ws.receive(), timeout=5.0)
+                    LOGGER.warning("VELUX WebSocket initial message type=%s data=%s", msg.type, msg.data)
+                except asyncio.TimeoutError:
+                    LOGGER.warning("VELUX WebSocket no initial message within 5s")
+
+                # Call retrieve_key for each gateway
+                for home in self._account.homes.values():
+                    for module_id, module in home.modules.items():
+                        if not isinstance(module, NXG):
+                            continue
+                        LOGGER.warning(
+                            "VELUX WebSocket calling retrieve_key home_id=%s bridge_id=%s",
+                            home.entity_id,
+                            module_id,
+                        )
+                        resp = await home.auth.async_post_api_request(
+                            endpoint=SETSTATE_ENDPOINT,
+                            params={
+                                "json": {
+                                    "app_identifier": "app_velux",
+                                    "home": {
+                                        "id": home.entity_id,
+                                        "modules": [{"id": module_id, "retrieve_key": True}],
+                                    },
+                                }
+                            },
+                        )
+                        raw: Any = await resp.json(content_type=None)
+                        LOGGER.warning("VELUX retrieve_key HTTP: %s", _json.dumps(raw))
+
+                # Listen for 15 seconds for any pushed key data
+                LOGGER.warning("VELUX WebSocket listening 15s for key push...")
+                end = asyncio.get_event_loop().time() + 15
+                while asyncio.get_event_loop().time() < end:
+                    try:
+                        msg = await asyncio.wait_for(ws.receive(), timeout=3.0)
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            LOGGER.warning("VELUX WebSocket push: %s", msg.data)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            LOGGER.warning("VELUX WebSocket closed/error: %s", msg.type)
+                            break
+                    except asyncio.TimeoutError:
+                        pass
+                LOGGER.warning("VELUX WebSocket test complete")
+        except Exception as err:
+            LOGGER.warning("VELUX WebSocket error: %s", err)
+
     async def async_retrieve_keys(self) -> None:
         """Call retrieve_key for every gateway and log the raw response.
 

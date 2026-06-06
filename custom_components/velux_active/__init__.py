@@ -41,6 +41,21 @@ async def async_setup_entry(
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    async def _handle_websocket_test(call: ServiceCall) -> None:
+        """Service handler: connect to VELUX WebSocket and log messages."""
+        ws_token = call.data.get("ws_token", "")
+        if not ws_token:
+            LOGGER.warning("VELUX websocket_test: ws_token parameter is required")
+            return
+        await coordinator.client.async_websocket_test(ws_token)
+
+    hass.services.async_register(
+        DOMAIN,
+        "websocket_test",
+        _handle_websocket_test,
+        schema=None,
+    )
+
     async def _handle_retrieve_keys(_call: ServiceCall) -> None:
         """Service handler: fire retrieve_key for all gateways and log the response."""
         LOGGER.warning(
