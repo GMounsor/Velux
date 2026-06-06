@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import OAuthTokens, VeluxActiveClient
-from .const import DOMAIN, LOGGER, PLATFORMS
+from .const import CONF_SIGN_KEY, CONF_SIGN_KEY_ID, DOMAIN, LOGGER, PLATFORMS
 from .coordinator import VeluxActiveDataUpdateCoordinator
 
 type VeluxActiveConfigEntry = ConfigEntry[VeluxActiveDataUpdateCoordinator]
@@ -26,6 +26,11 @@ async def async_setup_entry(
             return
         hass.config_entries.async_update_entry(entry, data={**entry.data, **token_data})
 
+    # Read optional sign key from options (hex-encoded bytes).
+    sign_key_hex = entry.options.get(CONF_SIGN_KEY, "").strip()
+    sign_key: bytes | None = bytes.fromhex(sign_key_hex) if sign_key_hex else None
+    sign_key_id: str | None = entry.options.get(CONF_SIGN_KEY_ID, "").strip() or None
+
     coordinator = VeluxActiveDataUpdateCoordinator(
         hass,
         entry,
@@ -35,6 +40,8 @@ async def async_setup_entry(
             entry.data[CONF_PASSWORD],
             initial_tokens=OAuthTokens.from_mapping(entry.data),
             token_updated=_handle_tokens,
+            sign_key=sign_key,
+            sign_key_id=sign_key_id,
         ),
     )
     await coordinator.async_config_entry_first_refresh()
@@ -70,6 +77,13 @@ async def async_setup_entry(
 
     hass.services.async_register(DOMAIN, "retrieve_keys", _handle_retrieve_keys)
     hass.services.async_register(DOMAIN, "dump_raw_data", _handle_dump_raw_data)
+
+    # Reload the integration when the user saves new options (e.g. sign key).
+    entry.async_on_unload(
+        entry.add_update_listener(
+            lambda _hass, _entry: _hass.config_entries.async_reload(_entry.entry_id)
+        )
+    )
 
     return True
 

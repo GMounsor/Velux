@@ -1,4 +1,19 @@
 {
+  "options": {
+    "step": {
+      "init": {
+        "title": "VELUX ACTIVE – Window Signing Key",
+        "description": "To open VELUX windows (not blinds), the VELUX cloud requires an HMAC-SHA512 signature using a HashSignKey that is paired to your KIX 300 gateway during Bluetooth setup.\n\nPaste the key as a hex string (e.g. `a1b2c3...`). Leave blank if you have not yet extracted it.",
+        "data": {
+          "sign_key": "HashSignKey (hex)",
+          "sign_key_id": "Sign Key ID"
+        }
+      }
+    },
+    "error": {
+      "invalid_sign_key": "HashSignKey must be a valid hex string (e.g. a1b2c3d4...)."
+    }
+  },
   "config": {
     "step": {
       "user": {

@@ -76,18 +76,10 @@ class VeluxActiveCover(VeluxActiveEntity, CoverEntity):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
-        LOGGER.warning(
-            "VELUX Active open command: module_id=%s name=%s velux_type=%s "
-            "current_position=%s target_position=%s reachable=%s mode=%s",
-            self.module.entity_id,
-            self.module.name,
-            getattr(self.module, "velux_type", "unknown"),
-            self.module.current_position,
-            self.module.target_position,
-            self.module.reachable,
-            getattr(self.module, "mode", None),
-        )
-        await self._async_run_command(self.module.async_open, target_position=100)
+        if getattr(self.module, "velux_type", None) == "window":
+            await self._async_run_signed_command(100)
+        else:
+            await self._async_run_command(self.module.async_open, target_position=100)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover."""
@@ -100,11 +92,40 @@ class VeluxActiveCover(VeluxActiveEntity, CoverEntity):
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover to a position."""
         position = kwargs[ATTR_POSITION]
-        await self._async_run_command(
-            self.module.async_set_target_position,
-            position,
-            target_position=position,
+        if getattr(self.module, "velux_type", None) == "window" and position > 0:
+            await self._async_run_signed_command(position)
+        else:
+            await self._async_run_command(
+                self.module.async_set_target_position,
+                position,
+                target_position=position,
+            )
+
+    async def _async_run_signed_command(self, position: int) -> None:
+        """Send a signed open/position command for velux_type=window modules."""
+        client = self.coordinator.client
+        if not client.has_sign_key:
+            raise HomeAssistantError(
+                "Opening this VELUX window requires a HashSignKey. "
+                "Go to Settings → Devices & Services → VELUX ACTIVE → Configure "
+                "to enter the sign_key and sign_key_id."
+            )
+        # Find the Home object that owns this module.
+        home = next(
+            (h for h in self.coordinator.data.homes.values() if self._module_id in h.modules),
+            None,
         )
+        if home is None:
+            raise HomeAssistantError(
+                f"Could not find home for module {self._module_id}"
+            )
+        try:
+            await client.async_set_position_signed(home, self._module_id, position)
+        except ApiError as err:
+            raise HomeAssistantError(str(err)) from err
+        self._set_motion_state(position)
+        self.async_write_ha_state()
+        await self.coordinator.async_request_refresh()
 
     def _motion_direction(self) -> str | None:
         """Return the current movement direction from live or optimistic data."""

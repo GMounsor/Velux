@@ -7,8 +7,9 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from pyatmo.exceptions import ApiError
@@ -19,7 +20,7 @@ from .api import (
     VeluxActiveClient,
     VeluxActiveInvalidAuth,
 )
-from .const import DOMAIN, LOGGER
+from .const import CONF_SIGN_KEY, CONF_SIGN_KEY_ID, DOMAIN, LOGGER
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {vol.Required(CONF_USERNAME): str, vol.Required(CONF_PASSWORD): str}
@@ -32,6 +33,12 @@ class VeluxActiveConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     _username: str
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: Any) -> OptionsFlow:
+        """Return the options flow handler."""
+        return VeluxActiveOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -124,3 +131,48 @@ class VeluxActiveConfigFlow(ConfigFlow, domain=DOMAIN):
             msg = "VELUX ACTIVE login did not return OAuth tokens"
             raise VeluxActiveCannotConnect(msg)
         return info, tokens
+
+
+class VeluxActiveOptionsFlow(OptionsFlow):
+    """Handle VELUX ACTIVE options (sign key configuration)."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show the options form."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            sign_key_hex = user_input.get(CONF_SIGN_KEY, "").strip()
+            # Validate hex string if provided
+            if sign_key_hex:
+                try:
+                    bytes.fromhex(sign_key_hex)
+                except ValueError:
+                    errors[CONF_SIGN_KEY] = "invalid_sign_key"
+
+            if not errors:
+                return self.async_create_entry(
+                    data={
+                        CONF_SIGN_KEY: sign_key_hex,
+                        CONF_SIGN_KEY_ID: user_input.get(CONF_SIGN_KEY_ID, "").strip(),
+                    }
+                )
+
+        current = self.config_entry.options
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_SIGN_KEY,
+                        default=current.get(CONF_SIGN_KEY, ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_SIGN_KEY_ID,
+                        default=current.get(CONF_SIGN_KEY_ID, ""),
+                    ): str,
+                }
+            ),
+            errors=errors,
+        )

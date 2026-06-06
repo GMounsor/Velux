@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from json import JSONDecodeError
+import hashlib
+import hmac
 import time
 from typing import Any
 
@@ -265,6 +268,8 @@ class VeluxActiveClient:
         *,
         initial_tokens: OAuthTokens | None = None,
         token_updated: Callable[[OAuthTokens], None] | None = None,
+        sign_key: bytes | None = None,
+        sign_key_id: str | None = None,
     ) -> None:
         """Initialize the client."""
         self._auth = VeluxActiveAuth(
@@ -276,6 +281,81 @@ class VeluxActiveClient:
         )
         self._account = AsyncAccount(self._auth)
         self._username = username
+        self._sign_key = sign_key
+        self._sign_key_id = sign_key_id
+        # Per-module nonce counters; start at 0 each session.
+        self._nonces: dict[str, int] = {}
+
+    @property
+    def has_sign_key(self) -> bool:
+        """Return True if a HashSignKey has been configured."""
+        return self._sign_key is not None and self._sign_key_id is not None
+
+    def _compute_signature(
+        self, value: int, timestamp: int, nonce: int, device_id: str
+    ) -> str:
+        """Compute HMAC-SHA512 for a target_position command.
+
+        Formula (confirmed from Charles Proxy capture of iOS VELUX app):
+            HMAC-SHA512(HashSignKey, "target_position" + str(value) +
+                        str(timestamp) + str(nonce) + device_id)
+        Result is URL-safe base64 without padding.
+        """
+        msg = f"target_position{value}{timestamp}{nonce}{device_id}".encode()
+        digest = hmac.new(self._sign_key, msg, hashlib.sha512).digest()  # type: ignore[arg-type]
+        return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+    async def async_set_position_signed(
+        self, home: Any, module_id: str, position: int
+    ) -> bool:
+        """Send a signed target_position command for a velux_type=window module.
+
+        Returns True if the API accepted the command (status == "ok").
+        Raises ApiError on HTTP-level failures (propagated from pyatmo).
+        """
+        import json as _json
+
+        nonce = self._nonces.get(module_id, 0)
+        self._nonces[module_id] = nonce + 1
+        timestamp = int(time.time())
+        sig = self._compute_signature(position, timestamp, nonce, module_id)
+
+        module = home.modules[module_id]
+        payload = {
+            "json": {
+                "app_identifier": "app_velux",
+                "home": {
+                    "id": home.entity_id,
+                    "modules": [
+                        {
+                            "id": module_id,
+                            "bridge": module.bridge,
+                            "target_position": position,
+                            "nonce": nonce,
+                            "timestamp": timestamp,
+                            "sign_key_id": self._sign_key_id,
+                            "hash_target_position": sig,
+                        }
+                    ],
+                },
+            }
+        }
+        LOGGER.debug(
+            "VELUX signed setstate: module_id=%s position=%s nonce=%s sign_key_id=%s",
+            module_id,
+            position,
+            nonce,
+            self._sign_key_id,
+        )
+        resp = await home.auth.async_post_api_request(
+            endpoint=SETSTATE_ENDPOINT,
+            params=payload,
+        )
+        raw: Any = await resp.json(content_type=None)
+        LOGGER.debug("VELUX signed setstate response: %s", _json.dumps(raw))
+        if isinstance(raw, dict):
+            return raw.get("status") == "ok"
+        return False
 
     async def async_validate(self) -> str:
         """Validate credentials by fetching topology only (no status poll needed)."""
