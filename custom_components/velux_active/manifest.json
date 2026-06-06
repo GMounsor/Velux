@@ -1,0 +1,17 @@
+{
+  "domain": "velux_active",
+  "name": "Velux Active",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/GMounsor/Velux",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/GMounsor/Velux/issues",
+  "loggers": [
+    "pyatmo"
+  ],
+  "requirements": [
+    "pyatmo>=9.4.0"
+  ],
+  "version": "1.0.0"
+}
