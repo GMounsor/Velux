@@ -360,7 +360,7 @@ class VeluxActiveClient:
                     LOGGER.warning("VELUX retrieve_key error: %s", err)
 
     async def async_dump_raw_data(self) -> None:
-        """Fetch and log the raw homesdata and homestatus API responses.
+        """Fetch and log raw API responses including getconfigs.
 
         Used by the velux_active.dump_raw_data diagnostic service to surface
         any key or security data that pyatmo doesn't expose.
@@ -369,23 +369,23 @@ class VeluxActiveClient:
         import json as _json
         from pyatmo.const import GETHOMESDATA_ENDPOINT, GETHOMESTATUS_ENDPOINT
 
+        _GETCONFIGS_ENDPOINT = "syncapi/v1/getconfigs"
+        _VELUX_BASE = "https://app.netatmo.net"
+
         # homesdata
         try:
             resp = await self._auth.async_post_api_request(
                 endpoint=GETHOMESDATA_ENDPOINT,
             )
             raw: Any = await resp.json(content_type=None)
-            LOGGER.warning(
-                "VELUX raw homesdata: %s",
-                _json.dumps(raw),
-            )
+            LOGGER.warning("VELUX raw homesdata: %s", _json.dumps(raw))
         except Exception as err:
             LOGGER.warning("VELUX homesdata error: %s", err)
 
         await asyncio.sleep(1)
 
-        # homestatus for each home
         for home in self._account.homes.values():
+            # homestatus
             try:
                 resp = await self._auth.async_post_api_request(
                     endpoint=GETHOMESTATUS_ENDPOINT,
@@ -398,11 +398,24 @@ class VeluxActiveClient:
                     _json.dumps(raw),
                 )
             except Exception as err:
-                LOGGER.warning(
-                    "VELUX homestatus error home_id=%s: %s",
-                    home.entity_id,
-                    err,
+                LOGGER.warning("VELUX homestatus error home_id=%s: %s", home.entity_id, err)
+
+            await asyncio.sleep(1)
+
+            # getconfigs — may contain security/key configuration
+            try:
+                resp = await self._auth.async_post_request(
+                    url=f"{_VELUX_BASE}/{_GETCONFIGS_ENDPOINT}",
+                    params={"home_id": home.entity_id},
                 )
+                raw = await resp.json(content_type=None)
+                LOGGER.warning(
+                    "VELUX raw getconfigs home_id=%s: %s",
+                    home.entity_id,
+                    _json.dumps(raw),
+                )
+            except Exception as err:
+                LOGGER.warning("VELUX getconfigs error home_id=%s: %s", home.entity_id, err)
 
     @property
     def tokens(self) -> OAuthTokens | None:
