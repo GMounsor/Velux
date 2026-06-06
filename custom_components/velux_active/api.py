@@ -318,6 +318,47 @@ class VeluxActiveClient:
             rooms=rooms,
         )
 
+    async def async_retrieve_keys(self) -> None:
+        """Call retrieve_key for every gateway and log the raw response.
+
+        Used by the velux_active.retrieve_keys diagnostic service.
+        The response may contain the HashSignKey needed for window open commands.
+        """
+        import json as _json
+
+        for home in self._account.homes.values():
+            for module_id, module in home.modules.items():
+                if not isinstance(module, NXG):
+                    continue
+                LOGGER.warning(
+                    "VELUX retrieve_key request: home_id=%s bridge_id=%s",
+                    home.entity_id,
+                    module_id,
+                )
+                try:
+                    resp = await home.auth.async_post_api_request(
+                        endpoint=SETSTATE_ENDPOINT,
+                        params={
+                            "json": {
+                                "home": {
+                                    "id": home.entity_id,
+                                    "modules": [{"id": module_id, "retrieve_key": True}],
+                                }
+                            }
+                        },
+                    )
+                    try:
+                        raw: Any = await resp.json(content_type=None)
+                    except Exception:
+                        raw = await resp.text()
+                    LOGGER.warning(
+                        "VELUX retrieve_key response: status=%s body=%s",
+                        resp.status,
+                        _json.dumps(raw) if isinstance(raw, dict) else raw,
+                    )
+                except Exception as err:
+                    LOGGER.warning("VELUX retrieve_key error: %s", err)
+
     @property
     def tokens(self) -> OAuthTokens | None:
         """Return the latest OAuth token set."""

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import OAuthTokens, VeluxActiveClient
-from .const import PLATFORMS
+from .const import DOMAIN, LOGGER, PLATFORMS
 from .coordinator import VeluxActiveDataUpdateCoordinator
 
 type VeluxActiveConfigEntry = ConfigEntry[VeluxActiveDataUpdateCoordinator]
@@ -40,6 +40,16 @@ async def async_setup_entry(
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    async def _handle_retrieve_keys(_call: ServiceCall) -> None:
+        """Service handler: fire retrieve_key for all gateways and log the response."""
+        LOGGER.warning(
+            "VELUX retrieve_keys service called — check logs for HashSignKey and SignKeyId"
+        )
+        await coordinator.client.async_retrieve_keys()
+
+    hass.services.async_register(DOMAIN, "retrieve_keys", _handle_retrieve_keys)
+
     return True
 
 
