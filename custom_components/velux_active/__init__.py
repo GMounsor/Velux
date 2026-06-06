@@ -48,7 +48,13 @@ async def async_setup_entry(
         )
         await coordinator.client.async_retrieve_keys()
 
+    async def _handle_dump_raw_data(_call: ServiceCall) -> None:
+        """Service handler: dump raw homesdata and homestatus API responses."""
+        LOGGER.warning("VELUX dump_raw_data service called — dumping full API responses")
+        await coordinator.client.async_dump_raw_data()
+
     hass.services.async_register(DOMAIN, "retrieve_keys", _handle_retrieve_keys)
+    hass.services.async_register(DOMAIN, "dump_raw_data", _handle_dump_raw_data)
 
     return True
 

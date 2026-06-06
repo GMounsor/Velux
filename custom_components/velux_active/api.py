@@ -359,6 +359,51 @@ class VeluxActiveClient:
                 except Exception as err:
                     LOGGER.warning("VELUX retrieve_key error: %s", err)
 
+    async def async_dump_raw_data(self) -> None:
+        """Fetch and log the raw homesdata and homestatus API responses.
+
+        Used by the velux_active.dump_raw_data diagnostic service to surface
+        any key or security data that pyatmo doesn't expose.
+        """
+        import asyncio
+        import json as _json
+        from pyatmo.const import GETHOMESDATA_ENDPOINT, GETHOMESTATUS_ENDPOINT
+
+        # homesdata
+        try:
+            resp = await self._auth.async_post_api_request(
+                endpoint=GETHOMESDATA_ENDPOINT,
+            )
+            raw: Any = await resp.json(content_type=None)
+            LOGGER.warning(
+                "VELUX raw homesdata: %s",
+                _json.dumps(raw),
+            )
+        except Exception as err:
+            LOGGER.warning("VELUX homesdata error: %s", err)
+
+        await asyncio.sleep(1)
+
+        # homestatus for each home
+        for home in self._account.homes.values():
+            try:
+                resp = await self._auth.async_post_api_request(
+                    endpoint=GETHOMESTATUS_ENDPOINT,
+                    params={"home_id": home.entity_id},
+                )
+                raw = await resp.json(content_type=None)
+                LOGGER.warning(
+                    "VELUX raw homestatus home_id=%s: %s",
+                    home.entity_id,
+                    _json.dumps(raw),
+                )
+            except Exception as err:
+                LOGGER.warning(
+                    "VELUX homestatus error home_id=%s: %s",
+                    home.entity_id,
+                    err,
+                )
+
     @property
     def tokens(self) -> OAuthTokens | None:
         """Return the latest OAuth token set."""
