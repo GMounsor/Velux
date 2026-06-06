@@ -340,10 +340,11 @@ class VeluxActiveClient:
                         endpoint=SETSTATE_ENDPOINT,
                         params={
                             "json": {
+                                "app_identifier": "app_velux",
                                 "home": {
                                     "id": home.entity_id,
                                     "modules": [{"id": module_id, "retrieve_key": True}],
-                                }
+                                },
                             }
                         },
                     )
