@@ -11,6 +11,8 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from pyatmo.exceptions import ApiError
+
 from .api import (
     OAuthTokens,
     VeluxActiveCannotConnect,
@@ -43,7 +45,8 @@ class VeluxActiveConfigFlow(ConfigFlow, domain=DOMAIN):
                 title, tokens = await self._async_validate_input(user_input)
             except VeluxActiveInvalidAuth:
                 errors["base"] = "invalid_auth"
-            except VeluxActiveCannotConnect:
+            except (VeluxActiveCannotConnect, ApiError) as err:
+                LOGGER.debug("Connection error validating Velux Active account: %s", err)
                 errors["base"] = "cannot_connect"
             except Exception:
                 LOGGER.exception("Unexpected error validating Velux Active account")

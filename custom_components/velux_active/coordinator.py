@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from pyatmo.exceptions import ApiError, ApiHomeReachabilityError
+from pyatmo.exceptions import ApiError, ApiHomeReachabilityError, NoDeviceError
 
 from .api import VeluxActiveClient, VeluxActiveData, VeluxActiveCannotConnect, VeluxActiveInvalidAuth
 from .const import DOMAIN, LOGGER, UPDATE_INTERVAL
@@ -46,6 +46,7 @@ class VeluxActiveDataUpdateCoordinator(DataUpdateCoordinator[VeluxActiveData]):
             VeluxActiveCannotConnect,
             ApiHomeReachabilityError,
             ApiError,
+            NoDeviceError,
             TimeoutError,
         ) as err:
             if (data := getattr(self, "data", None)) is not None:

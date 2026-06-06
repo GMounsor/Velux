@@ -13,6 +13,7 @@ from pyatmo.account import AsyncAccount
 from pyatmo.auth import AbstractAsyncAuth
 from pyatmo.const import AUTH_REQ_ENDPOINT, SETSTATE_ENDPOINT
 from pyatmo.enums import ScheduleType
+from pyatmo.exceptions import NoDeviceError
 from pyatmo.home import Home
 from pyatmo.modules import NXG, NXO
 from pyatmo.room import Room
@@ -25,7 +26,12 @@ from .const import (
 )
 
 # Work around pyatmo 9.4.0 until https://github.com/jabesq-org/pyatmo/pull/564 is released.
-ScheduleType._value2member_map_.setdefault("algo", ScheduleType.AUTO)
+# Some pyatmo versions use AUTO, others may not have it — guard both cases.
+try:
+    _algo_fallback = getattr(ScheduleType, "AUTO", None) or next(iter(ScheduleType))
+    ScheduleType._value2member_map_.setdefault("algo", _algo_fallback)
+except Exception:  # noqa: BLE001
+    pass
 
 DEFAULT_CLIENT_ID = "5931426da127d981e76bdd3f"
 DEFAULT_CLIENT_SECRET = "6ae2d89d15e767ae5c56b456b452d319"
@@ -272,16 +278,24 @@ class VeluxActiveClient:
         self._username = username
 
     async def async_validate(self) -> str:
-        """Validate credentials and return basic account info."""
-        data = await self.async_update()
-        home_names = [home.name for home in data.homes.values()]
+        """Validate credentials by fetching topology only (no status poll needed)."""
+        await self._account.async_update_topology()
+        home_names = [home.name for home in self._account.homes.values()]
         return home_names[0] if len(home_names) == 1 else self._username
 
     async def async_update(self) -> VeluxActiveData:
         """Refresh topology and current status."""
         await self._account.async_update_topology()
         for home_id in list(self._account.homes):
-            await self._account.async_update_status(home_id)
+            try:
+                await self._account.async_update_status(home_id)
+            except NoDeviceError as err:
+                # Gateway may be temporarily unreachable; keep going with topology data.
+                LOGGER.debug(
+                    "Status poll returned no devices for home %s (gateway may be offline): %s",
+                    home_id,
+                    err,
+                )
 
         covers: dict[str, NXO] = {}
         gateways: dict[str, NXG] = {}
