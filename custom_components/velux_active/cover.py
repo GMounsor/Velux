@@ -76,6 +76,17 @@ class VeluxActiveCover(VeluxActiveEntity, CoverEntity):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
+        LOGGER.warning(
+            "VELUX Active open command: module_id=%s name=%s velux_type=%s "
+            "current_position=%s target_position=%s reachable=%s mode=%s",
+            self.module.entity_id,
+            self.module.name,
+            getattr(self.module, "velux_type", "unknown"),
+            self.module.current_position,
+            self.module.target_position,
+            self.module.reachable,
+            getattr(self.module, "mode", None),
+        )
         await self._async_run_command(self.module.async_open, target_position=100)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
