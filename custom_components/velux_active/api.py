@@ -36,6 +36,12 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
+# These are the VELUX Active mobile app's OAuth credentials — the same values
+# are embedded in every copy of the VELUX Active iOS and Android app worldwide.
+# They identify the *application* to the Netatmo/VELUX API, not any individual
+# user. They were extracted from the app binary by the community and are already
+# published in multiple open-source projects (ha-velux-active, pyatmo, etc.).
+# They are not secret and carry no access to any user account on their own.
 DEFAULT_CLIENT_ID = "5931426da127d981e76bdd3f"
 DEFAULT_CLIENT_SECRET = "6ae2d89d15e767ae5c56b456b452d319"
 DEFAULT_APP_VERSION = "791302006"
