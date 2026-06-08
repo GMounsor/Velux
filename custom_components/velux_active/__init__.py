@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import OAuthTokens, VeluxActiveClient
-from .const import CONF_SIGN_KEY, CONF_SIGN_KEY_ID, DOMAIN, LOGGER, PLATFORMS
+from .const import CONF_SIGN_KEY, CONF_SIGN_KEY_ID, LOGGER, PLATFORMS
 from .coordinator import VeluxActiveDataUpdateCoordinator
 
 type VeluxActiveConfigEntry = ConfigEntry[VeluxActiveDataUpdateCoordinator]
@@ -47,36 +47,6 @@ async def async_setup_entry(
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    async def _handle_websocket_test(call: ServiceCall) -> None:
-        """Service handler: connect to VELUX WebSocket and log messages."""
-        ws_token = call.data.get("ws_token", "")
-        if not ws_token:
-            LOGGER.warning("VELUX websocket_test: ws_token parameter is required")
-            return
-        await coordinator.client.async_websocket_test(ws_token)
-
-    hass.services.async_register(
-        DOMAIN,
-        "websocket_test",
-        _handle_websocket_test,
-        schema=None,
-    )
-
-    async def _handle_retrieve_keys(_call: ServiceCall) -> None:
-        """Service handler: fire retrieve_key for all gateways and log the response."""
-        LOGGER.warning(
-            "VELUX retrieve_keys service called — check logs for HashSignKey and SignKeyId"
-        )
-        await coordinator.client.async_retrieve_keys()
-
-    async def _handle_dump_raw_data(_call: ServiceCall) -> None:
-        """Service handler: dump raw homesdata and homestatus API responses."""
-        LOGGER.warning("VELUX dump_raw_data service called — dumping full API responses")
-        await coordinator.client.async_dump_raw_data()
-
-    hass.services.async_register(DOMAIN, "retrieve_keys", _handle_retrieve_keys)
-    hass.services.async_register(DOMAIN, "dump_raw_data", _handle_dump_raw_data)
 
     # Reload the integration when the user saves new options (e.g. sign key).
     entry.async_on_unload(
