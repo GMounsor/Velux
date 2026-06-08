@@ -173,7 +173,17 @@ class VeluxActiveAuth(AbstractAsyncAuth):
         response: aiohttp.ClientResponse,
         url: str,
     ) -> aiohttp.ClientResponse:
-        """Process API responses and log setstate body errors."""
+        """Process API responses, auto-recovering from stale tokens."""
+        # If the server rejects our token, clear it so the next call re-authenticates.
+        if response.status == 403:
+            LOGGER.warning(
+                "VELUX Active: received 403 from %s — token may have been invalidated "
+                "(e.g. by logging in via the VELUX Active app). Clearing cached token "
+                "so the next request will re-authenticate automatically.",
+                url,
+            )
+            self._tokens = None
+
         response = await super().process_response(response, url)
         if not url.endswith(SETSTATE_ENDPOINT):
             return response
