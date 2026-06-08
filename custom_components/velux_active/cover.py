@@ -76,7 +76,8 @@ class VeluxActiveCover(VeluxActiveEntity, CoverEntity):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
-        if getattr(self.module, "velux_type", None) == "window":
+        velux_type = getattr(self.module, "velux_type", None)
+        if velux_type == "window":
             await self._async_run_signed_command(100)
         else:
             await self._async_run_command(self.module.async_open, target_position=100)

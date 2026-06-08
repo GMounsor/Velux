@@ -296,14 +296,14 @@ class VeluxActiveClient:
     ) -> str:
         """Compute HMAC-SHA512 for a target_position command.
 
-        Formula (confirmed from Charles Proxy capture of iOS VELUX app):
+        Formula (confirmed from Android smali hm4.smali / test against live API):
             HMAC-SHA512(HashSignKey, "target_position" + str(value) +
                         str(timestamp) + str(nonce) + device_id)
-        Result is URL-safe base64 without padding.
+        Result is URL-safe base64 WITH padding (Android Base64.NO_WRAP|URL_SAFE).
         """
         msg = f"target_position{value}{timestamp}{nonce}{device_id}".encode()
         digest = hmac.new(self._sign_key, msg, hashlib.sha512).digest()  # type: ignore[arg-type]
-        return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+        return base64.urlsafe_b64encode(digest).decode()  # keep == padding
 
     async def async_set_position_signed(
         self, home: Any, module_id: str, position: int
