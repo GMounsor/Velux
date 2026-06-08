@@ -341,40 +341,113 @@ def _derive_kek(passphrase: str, meta: dict) -> bytes | None:
     return   hashlib.pbkdf2_hmac("sha1",   step1, salt, itr,  dklen=32)
 
 
-def _try_decrypt_item(item_key: bytes, enc: bytes) -> bytes | None:
-    """Try AES-GCM (various nonce sizes) then AES-CBC to decrypt a keychain item."""
+def _gcm_rightshift(vec: list) -> list:
+    for x in range(15, 0, -1):
+        c = vec[x] >> 1
+        c |= (vec[x - 1] << 7) & 0x80
+        vec[x] = c
+    vec[0] >>= 1
+    return vec
+
+
+def _gcm_gf_mult(a: list, b: list) -> list:
+    mask = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01]
+    poly = [0x00, 0xe1]
+    Z = [0] * 16
+    V = list(a)
+    for x in range(128):
+        if b[x >> 3] & mask[x & 7]:
+            Z = [V[y] ^ Z[y] for y in range(16)]
+        bit = V[15] & 1
+        V = _gcm_rightshift(V)
+        V[0] ^= poly[bit]
+    return Z
+
+
+def _ghash(h: bytes, auth_data: bytes, data: bytes) -> bytes:
+    u = (16 - len(data)) % 16
+    v = (16 - len(auth_data)) % 16
+    x = auth_data + b"\x00" * v + data + b"\x00" * u
+    x += struct.pack(">QQ", len(auth_data) * 8, len(data) * 8)
+    y = [0] * 16
+    vec_h = list(h)
+    for i in range(0, len(x), 16):
+        block = list(x[i : i + 16])
+        y = [y[j] ^ block[j] for j in range(16)]
+        y = _gcm_gf_mult(y, vec_h)
+    return bytes(y)
+
+
+def _inc32(block: bytes) -> bytes:
+    (counter,) = struct.unpack(">L", block[12:])
+    return block[:12] + struct.pack(">L", counter + 1)
+
+
+def _gctr(k: bytes, icb: bytes, plaintext: bytes) -> bytes:
+    if not plaintext:
+        return b""
     from Crypto.Cipher import AES
+    ecb = AES.new(k, AES.MODE_ECB)
+    cb = icb
+    out = b""
+    for i in range(0, len(plaintext), 16):
+        cb = _inc32(cb)
+        ks = ecb.encrypt(cb)
+        blk = plaintext[i : i + 16]
+        out += bytes(a ^ b for a, b in zip(blk, ks[: len(blk)]))
+    return out
 
-    # GCM with authentication
-    for ns in (12, 16):
-        for ts in (16,):
-            if len(enc) <= ns + ts:
-                continue
-            nonce = enc[:ns]; ct = enc[ns:-ts]; tag = enc[-ts:]
-            try:
-                c  = AES.new(item_key, AES.MODE_GCM, nonce=nonce, mac_len=len(tag))
-                pt = c.decrypt(ct); c.verify(tag)
-                return pt
-            except Exception:
-                pass
 
-    # GCM without tag verification — accept only bplist output
-    for ns in (12, 16):
-        if len(enc) <= ns:
-            continue
+def _gcm_empty_iv(key: bytes, ct: bytes, tag: bytes) -> bytes | None:
+    """
+    iOS keychain backup v2/v3 decryption (dinosec format).
+    GCM with an empty IV: J0 = GHASH(H, '', '') = 0x00*16.
+    """
+    from Crypto.Cipher import AES
+    ecb = AES.new(key, AES.MODE_ECB)
+    H   = ecb.encrypt(b"\x00" * 16)
+    y0  = _ghash(H, b"", b"")          # = b"\x00" * 16
+    pt  = _gctr(key, y0, ct)
+    s   = _ghash(H, b"", ct)
+    T   = bytes(a ^ b for a, b in zip(s, ecb.encrypt(y0)))
+    return pt if T == tag else None
+
+
+def _try_decrypt_item(item_key: bytes, enc: bytes) -> bytes | None:
+    """
+    Decrypt a keychain item's encrypted payload.
+    iOS keychain backups use GCM with an empty IV (dinosec/iphone-dataprotection format):
+      ct  = enc[:-16]
+      tag = enc[-16:]
+    """
+    if len(enc) < 17:
+        return None
+
+    # Primary: GCM with empty IV (iOS keychain backup v2/v3)
+    ct  = enc[:-16]
+    tag = enc[-16:]
+    pt = _gcm_empty_iv(item_key, ct, tag)
+    if pt is not None:
+        return pt
+
+    # Fallback: standard GCM with 12-byte nonce (authenticated)
+    if len(enc) > 28:
+        from Crypto.Cipher import AES
         try:
-            pt = AES.new(item_key, AES.MODE_GCM, nonce=enc[:ns]).decrypt(enc[ns:])
-            if pt[:6] == b"bplist":
-                return pt
+            c  = AES.new(item_key, AES.MODE_GCM, nonce=enc[:12], mac_len=16)
+            pt = c.decrypt(enc[12:-16])
+            c.verify(enc[-16:])
+            return pt
         except Exception:
             pass
 
-    # CBC with zero IV — accept only bplist output
-    aligned = enc[:len(enc) - len(enc) % 16]
+    # Fallback: CBC with zero IV — accept only bplist/DER output
+    from Crypto.Cipher import AES
+    aligned = enc[: len(enc) - len(enc) % 16]
     if aligned:
         try:
             pt = AES.new(item_key, AES.MODE_CBC, b"\x00" * 16).decrypt(aligned)
-            if pt[:6] == b"bplist":
+            if pt[:6] in (b"bplist", b"\x30\x82", b"\x30\x81"):
                 return pt
         except Exception:
             pass
@@ -382,8 +455,82 @@ def _try_decrypt_item(item_key: bytes, enc: bytes) -> bytes | None:
     return None
 
 
+def _parse_der_keychain(pt: bytes) -> dict | None:
+    """
+    Parse iOS keychain DER format:
+      SET { SEQUENCE { UTF8String(key), value } ... }
+    Used for keychain backup items on iOS 9+.
+    """
+    if not pt or pt[0] not in (0x30, 0x31):
+        return None
+
+    def read_len(data: bytes, i: int) -> tuple[int, int]:
+        b = data[i]; i += 1
+        if b & 0x80:
+            n = b & 0x7f
+            length = int.from_bytes(data[i : i + n], "big")
+            i += n
+        else:
+            length = b
+        return length, i
+
+    result: dict = {}
+    i = 1  # skip outer tag
+    try:
+        _, i = read_len(pt, i)  # skip outer length
+    except Exception:
+        return None
+
+    while i < len(pt):
+        if i >= len(pt) or pt[i] not in (0x30, 0x31):
+            i += 1
+            continue
+        i += 1
+        try:
+            seq_len, i = read_len(pt, i)
+        except Exception:
+            break
+        end = i + seq_len
+        if end > len(pt):
+            break
+
+        # Key: must be UTF8String (0x0c)
+        if i >= end or pt[i] != 0x0c:
+            i = end
+            continue
+        i += 1
+        try:
+            kl, i = read_len(pt, i)
+        except Exception:
+            i = end; continue
+        key = pt[i : i + kl].decode("utf-8", errors="replace")
+        i += kl
+
+        # Value: any ASN.1 type
+        if i >= end:
+            i = end; continue
+        vtag = pt[i]; i += 1
+        try:
+            vl, i = read_len(pt, i)
+        except Exception:
+            i = end; continue
+        raw_val = pt[i : i + vl]
+        i = end  # jump to end of this SEQUENCE
+
+        if vtag == 0x04:                       # OCTET STRING → bytes
+            result[key] = raw_val
+        elif vtag in (0x0c, 0x16, 0x13, 0x18, 0x1a):  # string types → str
+            result[key] = raw_val.decode("utf-8", errors="replace")
+        elif vtag == 0x02:                     # INTEGER
+            result[key] = int.from_bytes(raw_val, "big") if raw_val else 0
+        else:
+            result[key] = raw_val
+
+    return result if result else None
+
+
 def _decode_item(pt: bytes) -> dict | None:
-    """Parse a decrypted keychain item payload as a bplist."""
+    """Parse a decrypted keychain item — bplist first, then DER."""
     try:
         return plistlib.loads(pt)
     except Exception:
@@ -394,7 +541,7 @@ def _decode_item(pt: bytes) -> dict | None:
             return plistlib.loads(pt[:-pad])
     except Exception:
         pass
-    return None
+    return _parse_der_keychain(pt)
 
 
 def _item_contains_keyword(item: dict | bytes) -> bool:
@@ -411,71 +558,94 @@ def _item_contains_keyword(item: dict | bytes) -> bool:
 
 def extract_keys_from_keychain(keychain: dict, class_keys: dict) -> tuple[str | None, str | None]:
     """
-    Decrypt every keychain item and return the first VELUX signing key pair found.
+    Decrypt every keychain item and return the VELUX signing key pair.
+
+    The VELUX app stores four items under svce='endToEndSecurityKeychainServiceName':
+      acct='endToEndSecurityKey<gw_id>'        → 32-byte HMAC signing key  ← sign_key
+      acct='endToEndSecurityKeyId<gw_id>'      → 16-byte key ID            ← sign_key_id
+      acct='endToEndSecurityPrivateKey<gw_id>' → 32-byte EC private key    (E2E encryption, not sign_key)
+      acct='endToEndSecurityPublicKey<gw_id>'  → 32-byte EC public key     (E2E encryption, not sign_key)
+
     Returns (sign_key_hex, sign_key_id_b64) or (None, None).
     """
-    sign_key: str | None    = None
+    sign_key:    str | None = None
     sign_key_id: str | None = None
 
+    n_total = n_long = n_valid_klen = n_has_ck = n_unwrapped = n_decrypted = n_parsed = 0
+
+    def _str(v: object) -> str:
+        return v.decode("utf-8", errors="replace") if isinstance(v, bytes) else str(v) if v else ""
+
     for section in ("genp", "inet", "keys", "cert"):
-        for idx, item in enumerate(keychain.get(section, [])):
+        for item in keychain.get(section, []):
             vd = item.get("v_Data", b"")
+            n_total += 1
             if len(vd) < 52:
                 continue
+            n_long += 1
 
             cls  = struct.unpack_from("<I", vd, 4)[0]
             klen = struct.unpack_from("<I", vd, 8)[0]
             if klen > 200 or 12 + klen > len(vd):
                 continue
-
-            wrapped_key = vd[12 : 12 + klen]
-            enc         = vd[12 + klen:]
+            n_valid_klen += 1
 
             ck = class_keys.get(cls)
             if ck is None:
                 continue
+            n_has_ck += 1
 
-            item_key = _rfc3394_unwrap(ck, wrapped_key)
+            item_key = _rfc3394_unwrap(ck, vd[12 : 12 + klen])
             if item_key is None:
                 continue
+            n_unwrapped += 1
 
-            pt = _try_decrypt_item(item_key, enc)
+            pt = _try_decrypt_item(item_key, vd[12 + klen:])
             if pt is None:
                 continue
+            n_decrypted += 1
 
             inner = _decode_item(pt)
-            if inner is None or not _item_contains_keyword(inner):
+            if inner is None:
+                continue
+            n_parsed += 1
+
+            svce = _str(inner.get("svce") or inner.get("srvr") or b"")
+            acct = _str(inner.get("acct") or b"")
+
+            # Only the VELUX end-to-end security service contains our keys
+            if "endToEndSecurityKeychainServiceName" not in svce:
                 continue
 
-            # Found a VELUX keychain item — extract the relevant fields
-            svce = inner.get("svce", b"")
-            if isinstance(svce, bytes):
-                svce = svce.decode("utf-8", errors="replace")
-            acct = inner.get("acct", b"")
-            if isinstance(acct, bytes):
-                acct = acct.decode("utf-8", errors="replace")
             v_data = inner.get("v_Data") or inner.get("data")
+            if not isinstance(v_data, bytes):
+                continue
 
-            norm_svce = _norm(svce)
             norm_acct = _norm(acct)
 
-            print(f"    Found VELUX keychain item: svce='{svce}' acct='{acct}'")
-
-            # endToEndSecurityKey → sign_key (raw bytes → hex)
-            if ("endtoendsecuritykey" in norm_svce or "endtoendsecuritykey" in norm_acct) \
-                    and "id" not in norm_svce:
-                if isinstance(v_data, bytes):
-                    sign_key = v_data.hex()
-                    print(f"    ✅  HashSignKey (sign_key): {sign_key}")
-
-            # endToEndSecurityKeyId → sign_key_id (raw bytes → base64)
-            if "endtoendsecuritykeyid" in norm_svce or "endtoendsecuritykeyid" in norm_acct:
-                if isinstance(v_data, bytes):
+            if "keyid" in norm_acct and sign_key_id is None:
+                # endToEndSecurityKeyId<gw_id> → 16-byte key ID
+                if len(v_data) == 16:
                     sign_key_id = base64.b64encode(v_data).decode()
-                    print(f"    ✅  SignKeyId (sign_key_id): {sign_key_id}")
+
+            elif "privatek" not in norm_acct and "publickey" not in norm_acct \
+                    and "keyid" not in norm_acct and sign_key is None:
+                # endToEndSecurityKey<gw_id> → 32-byte HMAC signing key
+                if len(v_data) == 32:
+                    sign_key = v_data.hex()
 
             if sign_key and sign_key_id:
-                return sign_key, sign_key_id
+                break
+        if sign_key and sign_key_id:
+            break
+
+    if sign_key:
+        print(f"    ✅  HashSignKey (sign_key):    {sign_key}")
+    if sign_key_id:
+        print(f"    ✅  SignKeyId   (sign_key_id): {sign_key_id}")
+
+    print(f"    Diagnostics: total={n_total} len≥52={n_long} valid_klen={n_valid_klen} "
+          f"has_classkey={n_has_ck} unwrapped={n_unwrapped} decrypted={n_decrypted} parsed={n_parsed}")
 
     return sign_key, sign_key_id
 
@@ -512,8 +682,8 @@ def try_ios_method() -> tuple[str | None, str | None]:
             break
 
     if not backup_root:
-        print("\n❌  No iTunes backup directory found.")
-        print("    Create an encrypted backup of your iPhone using iTunes or Finder,")
+        print("\n❌  No iPhone backup directory found.")
+        print("    Create an encrypted backup using Apple Devices (Windows) or Finder (Mac),")
         print("    then re-run this script.")
         return None, None
 
@@ -671,17 +841,17 @@ def main() -> None:
     # ── Step 2: extract from iPhone backup ───────────────────────────────────
     print("\n─── Step 2: Extract from iPhone backup ──────────────────────")
     print()
-    print("  Required: an encrypted iTunes/Finder backup of your iPhone")
-    print("  with the VELUX Active app installed.")
+    print("  Required: an encrypted iPhone backup (Apple Devices on Windows,")
+    print("  Finder on Mac) with the VELUX Active app installed.")
     print()
     print("  Don't have one yet? Steps to create:")
-    print("    Windows: Open iTunes → connect iPhone → Back Up Now")
-    print("             (tick 'Encrypt local backup', set a password)")
-    print("    Mac:     Open Finder → select iPhone → Back Up Now")
-    print("             (tick 'Encrypt local backup', set a password)")
+    print("    Windows: Open Apple Devices (Microsoft Store) → connect iPhone")
+    print("             → tick 'Encrypt local backup' → Back Up Now")
+    print("    Mac:     Open Finder → select iPhone → tick 'Encrypt local backup'")
+    print("             → Back Up Now")
     print()
 
-    has_backup = input("  Do you have an encrypted iTunes backup? [y/N]: ").strip().lower()
+    has_backup = input("  Do you have an encrypted iPhone backup? [y/N]: ").strip().lower()
     if has_backup != "y":
         print()
         print("  Re-run this script after creating an encrypted backup.")
