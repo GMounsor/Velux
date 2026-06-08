@@ -420,7 +420,7 @@ def extract_keys_from_keychain(keychain: dict, class_keys: dict) -> tuple[str | 
     for section in ("genp", "inet", "keys", "cert"):
         for idx, item in enumerate(keychain.get(section, [])):
             vd = item.get("v_Data", b"")
-            if len(vd) < 12:
+            if len(vd) < 52:
                 continue
 
             cls  = struct.unpack_from("<I", vd, 4)[0]
@@ -570,23 +570,25 @@ def try_ios_method() -> tuple[str | None, str | None]:
         return None, None
     print("    Key derived from passphrase ✅")
 
-    # ── try each keybag for class key unwrapping ──────────────────────────────
-    # The keychain uses a separate sub-keybag (usually index 1).
-    # Try all keybags and use the one that unwraps the most class keys.
-    best_class_keys: dict = {}
+    # ── unwrap class keys — merge across ALL sub-keybags ─────────────────────
+    # The BackupKeyBag contains multiple sub-keybags (one per protection class).
+    # Each sub-keybag has 1 class key. We must merge them all so that every
+    # class ID is available when we decrypt keychain items.
+    merged_class_keys: dict = {}
     for kb_idx, (_, classes) in enumerate(all_keybags):
-        ck_map: dict = {}
         for cls_id, fields in classes.items():
             wpky = fields.get("WPKY")
-            if wpky:
+            if wpky and cls_id not in merged_class_keys:
                 ck = _rfc3394_unwrap(kek, wpky)
                 if ck:
-                    ck_map[cls_id] = ck
-        if len(ck_map) > len(best_class_keys):
-            best_class_keys = ck_map
-        print(f"    Keybag [{kb_idx}]: {len(ck_map)} class keys unwrapped")
+                    merged_class_keys[cls_id] = ck
+        print(f"    Keybag [{kb_idx}]: classes={sorted(classes.keys())} "
+              f"({'unwrapped' if any(_rfc3394_unwrap(kek, f.get('WPKY', b'')) for f in classes.values() if f.get('WPKY')) else 'failed'})")
 
-    if not best_class_keys:
+    print(f"    Total class keys unwrapped: {len(merged_class_keys)} "
+          f"(IDs: {sorted(merged_class_keys.keys())})")
+
+    if not merged_class_keys:
         print("❌  No class keys could be unwrapped. Wrong passphrase?")
         return None, None
 
@@ -616,7 +618,7 @@ def try_ios_method() -> tuple[str | None, str | None]:
     print(f"    Keychain items: {counts}")
 
     print("\n🔑  Scanning for VELUX signing keys...")
-    sign_key, sign_key_id = extract_keys_from_keychain(keychain, best_class_keys)
+    sign_key, sign_key_id = extract_keys_from_keychain(keychain, merged_class_keys)
 
     return sign_key, sign_key_id
 
