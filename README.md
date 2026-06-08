@@ -4,6 +4,10 @@
 >
 > This is an unofficial, community-built integration. It is not affiliated with, endorsed by, or supported by VELUX or Netatmo. It is provided **as-is, with no warranties of any kind** — express or implied. Use of this integration is entirely at your own risk. The authors accept no responsibility for any damage, data loss, malfunction, or unexpected behaviour of your devices. Always ensure you have a way to control your windows and blinds independently of Home Assistant before using this integration.
 
+> 🏠 **LOCAL NETWORK REQUIRED**
+>
+> This integration communicates directly with your VELUX KIX 300 gateway over your **local network**. Home Assistant and your VELUX gateway must be connected to the **same local network** (i.e. the same router/Wi-Fi). It will **not** work if Home Assistant is hosted remotely or on a different network to the gateway. Remote access to Home Assistant itself (e.g. via the Nabu Casa cloud or a VPN) is fine — only the connection between Home Assistant and the gateway must be local.
+
 ---
 
 A Home Assistant custom integration for **VELUX ACTIVE with NETATMO** (KIX 300 gateway), built on top of the [ha-velux-active](https://github.com/Niek/ha-velux-active) baseline and extended with sensor and binary sensor support.
@@ -170,6 +174,7 @@ Copy both values — you will need them in the next step.
 | *No VELUX keys found* | Make sure the VELUX app has paired with your gateway, then delete the old backup, re-pair the app if needed, and create a fresh encrypted backup |
 | Script finds no backup | Make sure the backup finished successfully in Apple Devices or Finder |
 | Keys entered but windows don't open | Check you copied the full values with no extra spaces; reload the integration after saving |
+| Blinds or windows not responding | Confirm Home Assistant and the VELUX gateway are on the same local network |
 
 If you are still stuck, [open an issue](https://github.com/GMounsor/velux/issues) and include the output printed by the script.
 
@@ -177,6 +182,7 @@ If you are still stuck, [open an issue](https://github.com/GMounsor/velux/issues
 
 ## Notes
 
+- **Local network only.** Home Assistant and the VELUX KIX 300 gateway must be on the same local network. Commands are sent directly to the gateway over your LAN — they do not route via the VELUX cloud. If your Home Assistant instance is on a different network to the gateway, device control will not work.
 - Rain detection uses the gateway's internal `is_raining` flag. The gateway raises this flag automatically when it senses rain; it cannot be triggered independently.
 - Wind sensors are not part of the standard VELUX ACTIVE KIX 300 system. If you have a Netatmo anemometer connected, open an issue to discuss adding wind support.
 - CO₂ and illuminance from NXS sensors require pyatmo to expose those fields natively; this is planned for a future release.
