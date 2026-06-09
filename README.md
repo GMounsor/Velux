@@ -4,9 +4,9 @@
 >
 > This is an unofficial, community-built integration. It is not affiliated with, endorsed by, or supported by VELUX or Netatmo. It is provided **as-is, with no warranties of any kind** — express or implied. Use of this integration is entirely at your own risk. The authors accept no responsibility for any damage, data loss, malfunction, or unexpected behaviour of your devices. Always ensure you have a way to control your windows and blinds independently of Home Assistant before using this integration.
 
-> 🏠 **LOCAL NETWORK REQUIRED**
+> 🏠 **LOCAL NETWORK REQUIRED FOR DEVICE CONTROL**
 >
-> This integration communicates directly with your VELUX KIX 300 gateway over your **local network**. Home Assistant and your VELUX gateway must be connected to the **same local network** (i.e. the same router/Wi-Fi). It will **not** work if Home Assistant is hosted remotely or on a different network to the gateway. Remote access to Home Assistant itself (e.g. via the Nabu Casa cloud or a VPN) is fine — only the connection between Home Assistant and the gateway must be local.
+> This integration uses a **mixed cloud and local** architecture. Device state is polled from the VELUX cloud every 30 seconds (internet required). Commands are sent directly to the gateway over your **local network** — Home Assistant and the VELUX gateway must be on the same LAN. Remote access to Home Assistant via Nabu Casa or a VPN is fine; only the internal connection between Home Assistant and the gateway must be local. If they are on different networks, you will see state updates but commands will not reach the gateway.
 
 ---
 
@@ -175,6 +175,8 @@ Copy both values — you will need them in the next step.
 | Script finds no backup | Make sure the backup finished successfully in Apple Devices or Finder |
 | Keys entered but windows don't open | Check you copied the full values with no extra spaces; reload the integration after saving |
 | Blinds or windows not responding | Confirm Home Assistant and the VELUX gateway are on the same local network |
+| Integration shows "Re-authenticate" banner | Your session expired. Click the banner, enter your VELUX Active password, and the integration will recover automatically |
+| Windows stopped responding after using the VELUX Active app | The app may have rotated its signing keys. Re-run `get_velux_keys.py`, then go to **VELUX Active → Configure** and update the sign_key and sign_key_id values |
 
 If you are still stuck, [open an issue](https://github.com/GMounsor/velux/issues) and include the output printed by the script.
 
@@ -182,7 +184,7 @@ If you are still stuck, [open an issue](https://github.com/GMounsor/velux/issues
 
 ## Notes
 
-- **Local network only.** Home Assistant and the VELUX KIX 300 gateway must be on the same local network. Commands are sent directly to the gateway over your LAN — they do not route via the VELUX cloud. If your Home Assistant instance is on a different network to the gateway, device control will not work.
+- **Mixed cloud and local.** Device state (positions, sensors, rain) is fetched from the VELUX cloud every 30 seconds — so a working internet connection is required for state updates. Commands (open, close, set position) are sent directly to the gateway over your local network. Both Home Assistant and the gateway must be on the same LAN for commands to work, even when remote access to Home Assistant itself (e.g. via Nabu Casa) is enabled.
 - Rain detection uses the gateway's internal `is_raining` flag. The gateway raises this flag automatically when it senses rain; it cannot be triggered independently.
 - Wind sensors are not part of the standard VELUX ACTIVE KIX 300 system. If you have a Netatmo anemometer connected, open an issue to discuss adding wind support.
 - CO₂ and illuminance from NXS sensors require pyatmo to expose those fields natively; this is planned for a future release.

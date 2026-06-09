@@ -38,13 +38,19 @@ async def async_setup_entry(
 class VeluxActiveCover(VeluxActiveEntity, CoverEntity):
     """Representation of a VELUX ACTIVE cover."""
 
-    _attr_device_class = CoverDeviceClass.SHUTTER
     _attr_supported_features = (
         CoverEntityFeature.OPEN
         | CoverEntityFeature.CLOSE
         | CoverEntityFeature.STOP
         | CoverEntityFeature.SET_POSITION
     )
+
+    @property
+    def device_class(self) -> CoverDeviceClass:
+        """Return window for tilt/swing actuators, shutter for everything else."""
+        if getattr(self.module, "velux_type", None) == "window":
+            return CoverDeviceClass.WINDOW
+        return CoverDeviceClass.SHUTTER
 
     def __init__(self, coordinator, module_id: str) -> None:
         """Initialize the cover."""
